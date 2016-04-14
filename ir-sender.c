@@ -21,10 +21,11 @@
 #include <stdlib.h>
 
 // Serial Port setup
-#define BAUD 250000				// Baud Rate for serial Port, (HC-06 uses 9600 by default so use that)
+//#define BAUD 250000				// Baud Rate for serial Port, (Fast for FTDI debug)
+#define BAUD 9600				// Baud Rate for serial Port, (HC-06 uses 9600 by default so use that)
 #define BAUDRATE ((F_CPU)/(BAUD*16UL)-1)	// set baud rate value for UBRR
 #define SERIAL_TXBUF 80
-#define SERIAL_RXBUF 20
+#define SERIAL_RXBUF 40
 char serial_tx[SERIAL_TXBUF+1];
 uint8_t serial_txpos=0;
 
@@ -132,6 +133,7 @@ ISR(INT0_vect){
 	if (ir_pos >= IR_MAX) {
 		TCCR1B &= ~(_BV(CS10) | _BV(CS11) | _BV(CS12));	// Stop Timer 1
 		ir_pos=0;		// and/or set ir_ready
+		memset(raw_ir,0,(sizeof(int16_t) * IR_MAX));
 		UDR0 = '#';
 		//serial_send("IR: Overflow\r\n");	// serial_send from ISR is bad
 		return;
@@ -148,7 +150,6 @@ ISR(INT0_vect){
 	// Check Timer1 state, if stopped, start it
 	if ((TCCR1B & (_BV(CS10) | _BV(CS11) | _BV(CS12)) )  == 0 ){	// Clock stopped
 		TCCR1B |= _BV(CS11); // CLK/8 (1 tick per uS @ 8MHz)	// Start Clock
-		//TCCR1B |= (_BV(CS11) | _BV(CS10)); // CLK/64 (1 tick per 8 uS @ 8MHz)	// Start Clock
 		ir_pos=0;
 		memset(raw_ir,0,(sizeof(int16_t) * IR_MAX));
 	} else {
@@ -175,6 +176,7 @@ ISR(INT0_vect){
 
 ISR(TIMER1_COMPA_vect){			// Compare OCR1A
 	ir_ready=1;
+	TCCR1B &= ~(_BV(CS10) | _BV(CS11) | _BV(CS12));	// Stop Timer 1
 }
 //#define TIMER1_COMPB_vect _VECTOR(12)  /* Timer/Counter1 Compare Match B */
 
@@ -186,11 +188,15 @@ ISR(TIMER1_OVF_vect){	// Timer1 Overflow
 #endif
 
 void NEC(struct irnec_t data, uint8_t ver){
-	uint8_t byte,i;
+	uint8_t byte;
+	int8_t i,c;
 	// Might be better if we can handle turning the pin on and off using the pwm interrupt
 	// using ISR(TIMER0_COMPB_vect) as per http://forum.arduino.cc/index.php?topic=102430.0#msg769342
 
 	// We could also do this by starting and stopping the Timer
+
+	// TODO, We ought to store the current value so we can restore to the sane
+	EIMSK &= ~_BV(INT0);		// Disable Int0
 
 	// Header 9ms On, 4.5ms off
 	DDRD |= _BV(PIND6);
@@ -198,55 +204,44 @@ void NEC(struct irnec_t data, uint8_t ver){
 	DDRD &= ~_BV(PIND6);
 	_delay_ms(4.5);
 
-	// Address Byte
-	for (i=7; i>=0; i--){
-		DDRD |= _BV(PIND6);
-		_delay_us(560);
-		DDRD &= ~_BV(PIND6);
-		if (data.address & _BV(i))
-			_delay_ms(1.69);	//1
-		else
-			_delay_us(560);		//0
+	for (c=0;c<=3;c++){
+		switch (c){
+		case 0:
+			byte=data.address;
+		break;
+		case 1:
+			if (2 == ver)
+				byte=data.address2;
+			else
+				byte=~data.address;
+		break;
+		case 2:
+			byte=data.command;
+		break;
+		case 3:
+			byte=~data.command;
+		break;
+			
+		}
+
+		for (i=0; i<=7; i++){
+			DDRD |= _BV(PIND6);
+			_delay_us(560);
+			DDRD &= ~_BV(PIND6);
+			if (byte & _BV(i)){
+				_delay_ms(1.69);	//1
+			} else {
+				_delay_us(560);		//0
+			}
+		}
 	}
 
-	// 2nd Address Byte (^address in ver1, address2 in ver2)
-	if (1 == ver)
-		byte=~data.address;
-	else if (2 == ver)
-		byte=data.address2;
+	// End Pulse
+	DDRD |= _BV(PIND6);
+	_delay_us(560);
+	DDRD &= ~_BV(PIND6);
 
-	for (i=7; i>=0; i--){
-		DDRD |= _BV(PIND6);
-		_delay_us(560);
-		DDRD &= ~_BV(PIND6);
-		if (byte & _BV(i))
-			_delay_ms(1.69);	//1
-		else
-			_delay_us(560);		//0
-	}
-
-	// Command
-	for (i=7; i>=0; i--){
-		DDRD |= _BV(PIND6);
-		_delay_us(560);
-		DDRD &= ~_BV(PIND6);
-		if (data.command & _BV(i))
-			_delay_ms(1.69);	//1
-		else
-			_delay_us(560);		//0
-	}
-
-	// Command
-	for (i=7; i>=0; i--){
-		DDRD |= _BV(PIND6);
-		_delay_us(560);
-		DDRD &= ~_BV(PIND6);
-		if (data.command & _BV(i))
-			_delay_us(560);		//0
-		else
-			_delay_ms(1.69);	//1
-	}
-
+	EIMSK |= _BV(INT0);		// Enable Int0
 }
 
 uint8_t IRisRC5(void){
@@ -277,10 +272,6 @@ uint8_t IRisRC5(void){
 
 struct irrc5_t IRDecodeRC5(void){
 	struct irrc5_t data = {0,0,0};
-
-
-//988 | -808 876 | -876 875 | -877 873 -878 873 -878 874 -877 1728 -850 | 901 -850 900 -850 901 -850 900 -851 900 -1776 845 | -564
-//988 -808 876 -876 875 -877 873 -878 873 -878 874 -877 1728 -850 901 -850 900 -850 901 -850 900 -851 900 -1776 845 -564
 	uint8_t bit=0;
 	uint8_t count;
 	uint16_t t=889;					// The first part of bit 0 is low
@@ -331,11 +322,47 @@ struct irrc5_t IRDecodeRC5(void){
 
 // Handle NEC and NECx2 together then determine which it is in main loop
 uint8_t IRisNEC(void){
+	// TODO also check the number of samples? 
+	if (IRRANGE(raw_ir[0],3000,26000) && IRRANGE(raw_ir[1],4400,4500) ) {
+		return 1;
+	}
 	return 0;
 }
 
+/* Samsung (Channel1)
+4474 -4448
+540 -1668 540 -1668 541 -1667 540 -563 540 -563 540 -563 540 -564 539 -564	1110 0000
+540 -1668 540 -1669 540 -1669 540 -564 541 -564 540 -564 540 -564 540 -563	1110 0000
+541 -564 540 -564 539 -1669 539 -565 540 -564 540 -564 540 -563 541 -563	0010 0000
+540 -1669 541 -1668 540 -563 540 -1669 540 -1668 540 -1668 540 -1668 540 -1668	1101 1111
+540 */
 struct irnec_t IRDecodeNEC(void){
 	struct irnec_t data={0,0,0,0};
+	uint8_t c;
+
+	// Address Byte
+	for (c=0; c<=7; c++){
+		if (IRRANGE(raw_ir[(c*2)+3],1600,1700))
+			data.address |= _BV(c);
+	}
+
+	// 2nd Address Byte (~Address in NEC1, sub device in NECx2)
+	for (c=0; c<=7; c++){
+		if (IRRANGE(raw_ir[(c*2)+19],1600,1700))
+			data.address2 |= _BV(c);
+	}
+
+	// Command Byte
+	for (c=0; c<=7; c++){
+		if (IRRANGE(raw_ir[(c*2)+35],1600,1700))
+			data.command |= _BV(c);
+	}
+
+	// Inverted Command Byte
+	for (c=0; c<=7; c++){
+		if (IRRANGE(raw_ir[(c*2)+51],1600,1700))
+			data._command |= _BV(c);
+	}
 	return data;
 }
 
@@ -380,7 +407,7 @@ int main(void) {
 	TCCR1B = 0;	// Don't enable clock yet (we enable it on first INT0 transition)
 	TIMSK1 = (_BV(OCIE1A) | _BV(TOIE1) );	// Enable Interrupts on (OCIE1A, OCIE1B, TOIE1) 
 	// OCR1AH and OCR1AL
-	OCR1A = 10000;	// Packet finished after 10ms
+	OCR1A = 16000;	// Packet finished after 10ms
 	// OCR1A set to trigger when packet complete
 	// OCR1B Set to trigger when no more signal ?
 	
@@ -398,6 +425,8 @@ int main(void) {
 	serial_send("Starting\r\n");
 	int count=0;
 	char buff[SERIAL_RXBUF+7];
+	char *tok;
+	uint8_t clilevel=0;
 
 	sprintf(buff,"WDT: %#x\r\n",WDTCSR);
 	serial_send(buff);
@@ -405,9 +434,79 @@ int main(void) {
 		wdt_reset();
 		_delay_ms(10);
 		if (1 == serial_rxready){
-			sprintf(buff,"rx: %s\r\n",serial_rx);
-			if (strstr(serial_rx,"NEC")
-			serial_send(buff);
+			//tok=strtok(serial_rx," ");
+			struct irnec_t necdata;
+			tok=serial_rx;
+			switch (clilevel){
+				case 1:	// PVR
+					//tok=strtok(NULL," ");
+					necdata.address=0;
+					necdata.address2=16;
+					if (strcmp(tok,"..") == 0)		// Up a level
+						clilevel=0;
+					else if (strcmp(tok,"power") == 0)	// Power
+						necdata.command=0x00;
+					else if (strcmp(tok,"up") == 0)		// Up
+						necdata.command=0x11;
+					else if (strcmp(tok,"left") == 0)	// Left
+						necdata.command=0x12;
+					else if (strcmp(tok,"ok") == 0)		// OK
+						necdata.command=0x13;
+					else if (strcmp(tok,"right") == 0)	// Right
+						necdata.command=0x14;
+					else if (strcmp(tok,"down") == 0)	// Down
+						necdata.command=0x15;
+					else if (strcmp(tok,"media") == 0)	// Media
+						necdata.command=0x6f;
+					else if (strcmp(tok,"back") == 0)	// Back
+						necdata.command=0x41;
+					else if (strcmp(tok,"exit") == 0)	// Exit
+						necdata.command=0x16;
+					else if (strcmp(tok,"->") == 0)		// Step Forward
+						necdata.command=0x67;
+					else if (strcmp(tok,"<-") == 0)		// Step Back
+						necdata.command=0x66;
+					else if (strcmp(tok,"guide") == 0)	// Guide
+						necdata.command=0x1b;
+					else {
+						sprintf(buff,"PVR: Unknown command \"%s\"\r\n",serial_rx);
+						serial_send(buff);
+						necdata.command=0xff;
+					}
+					NEC(necdata,2);
+				break;
+
+				case 2: // TV
+					//tok=strtok(NULL," ");
+					necdata.address=7;
+					necdata.address2=7;
+					if (strcmp(tok,"..") == 0)		// Up a level
+						clilevel=0;
+					else
+						sprintf(buff,"TV: Unknown command \"%s\"\r\n",serial_rx);
+						serial_send(buff);
+					//necdata.command=31;	// Vol Up
+					NEC(necdata,2);
+				break;
+
+				default:
+					if (strcasecmp(tok,"PVR") == 0)
+						clilevel=1;
+					else if (strcasecmp(tok,"TV") == 0)
+						clilevel=2;
+					else
+						sprintf(buff,"rx: %s\r\n",serial_rx);
+				break;
+			}
+
+			if (1 == clilevel)
+				serial_send("PVR> ");
+			else if (2 == clilevel)
+				serial_send("TV> ");
+			else
+				serial_send("> ");
+				
+	
 			serial_rx_reset();
 		}
 
@@ -418,6 +517,9 @@ int main(void) {
 				sprintf(buff,"RC5: %#x, %#x, %#x\r\n",data.header,data.address,data.command);
 				serial_send(buff);
 			} else if ( IRisNEC()) {
+				struct irnec_t data = IRDecodeNEC();
+				sprintf(buff,"NEC: %#x, %#x, %#x(%#x}\r\n",data.address,data.address2,data.command,data._command);
+				serial_send(buff);
 			} else {
 				int c;
 				for (c=0; c<= ir_pos; c++){
@@ -427,6 +529,8 @@ int main(void) {
 				serial_send("\r\n");
 			}
 			ir_ready=0;
+			ir_pos=0;
+			memset(raw_ir,0,(sizeof(int16_t) * IR_MAX));
 		}
 		if (0 == count)
         		PORTD |= _BV(4);
