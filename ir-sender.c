@@ -446,6 +446,26 @@ int main(void) {
 						clilevel=0;
 					else if (strcmp(tok,"power") == 0)	// Power
 						necdata.command=0x00;
+					else if (strcmp(tok,"1") == 0)		// 1
+						necdata.command=0x03;
+					else if (strcmp(tok,"2") == 0)		// 2
+						necdata.command=0x04;
+					else if (strcmp(tok,"3") == 0)		// 3
+						necdata.command=0x05;
+					else if (strcmp(tok,"4") == 0)		// 4
+						necdata.command=0x06;
+					else if (strcmp(tok,"5") == 0)		// 5
+						necdata.command=0x07;
+					else if (strcmp(tok,"6") == 0)		// 6
+						necdata.command=0x08;
+					else if (strcmp(tok,"7") == 0)		// 7
+						necdata.command=0x09;
+					else if (strcmp(tok,"8") == 0)		// 8
+						necdata.command=0x0a;
+					else if (strcmp(tok,"9") == 0)		// 9
+						necdata.command=0x0b;
+					else if (strcmp(tok,"0") == 0)		// 0
+						necdata.command=0x0c;
 					else if (strcmp(tok,"up") == 0)		// Up
 						necdata.command=0x11;
 					else if (strcmp(tok,"left") == 0)	// Left
