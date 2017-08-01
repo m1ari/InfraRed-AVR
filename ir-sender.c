@@ -538,12 +538,12 @@ int main(void) {
 				serial_send(buff);
 			} else if ( IRisNEC()) {
 				struct irnec_t data = IRDecodeNEC();
-				sprintf(buff,"NEC: %#x, %#x, %#x(%#x}\r\n",data.address,data.address2,data.command,data._command);
+				sprintf(buff,"NEC: %#04x, %#04x, %#04x(%#04x)\r\n",data.address,data.address2,data.command,data._command);
 				serial_send(buff);
 			} else {
 				int c;
 				for (c=0; c<= ir_pos; c++){
-					sprintf(buff,"% 4i ",raw_ir[c]);
+					sprintf(buff,"IR: % 4i ",raw_ir[c]);
 					serial_send(buff);
 				}
 				serial_send("\r\n");
