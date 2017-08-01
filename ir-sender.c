@@ -509,11 +509,66 @@ int main(void) {
 					NEC(necdata,2);
 				break;
 
+				case 10: // NEC1 Raw Codes
+					if (strcmp(tok,"..") == 0)		// Up a level
+						clilevel=0;
+					else if (':' == tok[0])	{		// Set Address (Start with :)
+						necdata.address=0;
+						int multiplier = 10;		// Expect base 10 by default
+						int z;
+						for (z=1; z<=4; z++){
+							if ((1 == z) && ('x' == tok[1]) ) // Change to Hex
+								multiplier = 16;
+							else if (('0' <= tok[z]) && ('9' >= tok[z]) )	// Numeric
+								necdata.address = ( necdata.address * multiplier ) + tok[z]-'0';
+							else if (('a' <= tok[z]) && ('f' >= tok[z]) )	// Hex (Also check mult=16)
+								necdata.address = ( necdata.address * multiplier ) + tok[z]-'a';
+							else if (('A' <= tok[z]) && ('F' >= tok[z]) )	// Hex (Also check mult=16)
+								necdata.address = ( necdata.address * multiplier ) + tok[z]-'A';
+							else if ( ('\r' == tok[z]) || ('\n' == tok[z]) || ('\0' == tok[z]) )
+								break;
+							else {
+								sprintf(buff,"NEC: Unknown input %c in \"%s\"\r\n", tok[z], serial_rx);
+								serial_send(buff);
+							}
+						}
+					} else if ('#' == tok[0])	{		// Send Command (Start with #)
+						necdata.command=0;
+						int multiplier = 10;		// Expect base 10 by default
+						int z;
+						for (z=1; z<=4; z++){
+							if ((1 == z) && ('x' == tok[1]) ) // Change to Hex
+								multiplier = 16;
+							else if (('0' <= tok[z]) && ('9' >= tok[z]) )	// Numeric
+								necdata.command = ( necdata.command * multiplier ) + tok[z]-'0';
+							else if (('a' <= tok[z]) && ('f' >= tok[z]) )	// Hex (Also check mult=16)
+								necdata.command = ( necdata.command * multiplier ) + tok[z]-'a'+10;
+							else if (('A' <= tok[z]) && ('F' >= tok[z]) )	// Hex (Also check mult=16)
+								necdata.command = ( necdata.command * multiplier ) + tok[z]-'A'+10;
+							else if ( ('\r' == tok[z]) || ('\n' == tok[z]) || ('\0' == tok[z]) )
+								break;
+							else {
+								sprintf(buff,"NEC: Unknown input %c in \"%s\"\r\n", tok[z], serial_rx);
+								serial_send(buff);
+							}
+						}
+						sprintf(buff,"NEC: Sending Command %#04x to Address %#04x\r\n",necdata.command,necdata.address);
+						serial_send(buff);
+						NEC(necdata,1);
+					} else {
+						sprintf(buff,"NEC: Unknown command \"%s\"\r\n",serial_rx);
+						serial_send(buff);
+					}
+
+				break;
+
 				default:
 					if (strcasecmp(tok,"PVR") == 0)
 						clilevel=1;
 					else if (strcasecmp(tok,"TV") == 0)
 						clilevel=2;
+					else if (strcasecmp(tok,"NEC") == 0)
+						clilevel=10;
 					else
 						sprintf(buff,"rx: %s\r\n",serial_rx);
 				break;
@@ -523,6 +578,8 @@ int main(void) {
 				serial_send("PVR> ");
 			else if (2 == clilevel)
 				serial_send("TV> ");
+			else if (10 == clilevel)
+				serial_send("NEC1> ");
 			else
 				serial_send("> ");
 				
